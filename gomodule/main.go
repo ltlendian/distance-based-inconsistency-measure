@@ -410,6 +410,7 @@ type Formula struct {
 	//models map[uint][]Model
 	models map[uint][]Model
 	modelsMap map[uint]map[string]*Model
+	nonModelsMap map[uint]map[string]*Model
 	modelsMutex sync.Mutex
 	varIndices []int
 }
@@ -454,16 +455,20 @@ func(f *Formula) loadModels(k uint) []Model {
 	copy(tmp, v)
 	return tmp
 }
-func(f *Formula) storeModelsMap(k uint, m map[string]*Model) {
+func(f *Formula) storeModelsMap(k uint, models map[string]*Model, nonModels map[string]*Model) {
 	f.modelsMutex.Lock(); defer f.modelsMutex.Unlock()
 	if f.modelsMap == nil { f.modelsMap = map[uint]map[string]*Model{} }
-	f.modelsMap[k] = m
+	if f.nonModelsMap == nil { f.nonModelsMap = map[uint]map[string]*Model{} }
+	f.modelsMap[k] = models
+	f.nonModelsMap[k] = nonModels
 }
-func(f *Formula) loadModelsMap(k uint) map[string]*Model {
+func(f *Formula) loadModelsMap(k uint) (map[string]*Model, map[string]*Model) {
 	f.modelsMutex.Lock(); defer f.modelsMutex.Unlock()
 	if f.modelsMap == nil { f.modelsMap = map[uint]map[string]*Model{} }
-	v := f.modelsMap[k]
-	return v
+	if f.nonModelsMap == nil { f.nonModelsMap = map[uint]map[string]*Model{} }
+	models := f.modelsMap[k]
+	nonModels := f.nonModelsMap[k]
+	return models, nonModels
 }
 func(f *Formula) getVarIndices(globalAlphabet *Alphabet) []int {
 	if f.varIndices == nil { 
@@ -504,9 +509,9 @@ func(f *Formula) dilateModel(k uint, alphabet *Alphabet) []Model {
 				dilated[i] = d
 				i += 1
 			}
-			fmt.Printf("%v\n->\n%v\n", len(toDilate), len(dilated))
-			fmt.Printf("%v: dilating %d -> %d : %v\n", f, l-1, l, toDilate)
-			fmt.Printf("%v: dilated\n%d : %v ->\n%d : %v\n", f, len(toDilate), toDilate, len(dilated), dilated)
+			//fmt.Printf("%v\n->\n%v\n", len(toDilate), len(dilated))
+			//fmt.Printf("%v: dilating %d -> %d : %v\n", f, l-1, l, toDilate)
+			//fmt.Printf("%v: dilated\n%d : %v ->\n%d : %v\n", f, len(toDilate), toDilate, len(dilated), dilated)
 			f.storeModels(l, dilated)
 
 			if l == k { return dilated }
@@ -543,38 +548,11 @@ func(f *Formula) GetModels(k uint, alphabet *Alphabet) []Model {
 	return f.dilateModel(k, alphabet)
 }
 
-func(f *Formula) dilateModelMap(k uint, alphabet *Alphabet) map[string]*Model {
-	//fmt.Printf("dilateModel(%d, %p = %v, alph(%d))\n", k, f, f, len(alphabet))
-	for l := uint(1) ; l <= k ; l++ {
-		if m := f.loadModelsMap(l) ; m == nil {
-			toDilate := f.loadModelsMap(l-1)
-			//fmt.Printf("%v: dilating %d -> %d : %v\n", f, l-1, l, toDilate)
-			dilatedMap := map[string]*Model{}
-			for _, m := range toDilate {
-				for _, i := range f.getVarIndices(alphabet) {
-					md := m.CopyWith(i, (*m)[i] != '1')
-					dilatedMap[md.String()] = md
-				}
-			}
-
-			//fmt.Printf("%v\n->\n%v\n", len(toDilate), len(dilatedMap))
-			//fmt.Printf("%v: dilating %d -> %d : %v\n", f, l-1, l, toDilate)
-			//fmt.Printf("%v: dilatedMap\n%d : %v ->\n%d : %v\n", f, len(toDilate), toDilate, len(dilatedMap), dilatedMap)
-			f.storeModelsMap(l, dilatedMap)
-
-			if l == k { return dilatedMap }
-		}
-	}
-
-	return f.loadModelsMap(k)
-
-}
-
-func(f *Formula) GetModelsMap(k uint, alphabet *Alphabet) map[string]*Model {
-	//fmt.Printf("GetModels(%d, %p = %v, alph(%d))\n", k, f, f, len(alphabet))
-	if baseModel := f.loadModelsMap(0) ; baseModel == nil {
+func(f *Formula) GetModelsMap(k uint, alphabet *Alphabet) (map[string]*Model, map[string]*Model) {
+	if baseModels, baseNonModels := f.loadModelsMap(0) ; baseModels == nil || baseNonModels == nil {
 		modelCount := 1 << len(*alphabet)
 		models := make(map[string]*Model, modelCount)
+		nonModels := make(map[string]*Model, modelCount)
 		for i := 0 ; i < modelCount ; i++ {
 			model := NewModel(len(*alphabet))
 			for j := 0; j < len(*alphabet) ; j++ {
@@ -583,15 +561,37 @@ func(f *Formula) GetModelsMap(k uint, alphabet *Alphabet) map[string]*Model {
 			}
 			if f.Eval2(alphabet, model) {
 				models[string(*model)] = model
+			} else {
+				nonModels[string(*model)] = model
 			}
 		}
-		f.storeModelsMap(0, models)
+		f.storeModelsMap(0, models, nonModels)
+
+		if k == 0 { return models, nonModels }
 	}
 
-	v := f.loadModelsMap(k)
-	if v != nil { return v }
+	for l := uint(1) ; l <= k ; l++ {
+		if models, nonModels := f.loadModelsMap(l) ; models == nil || nonModels == nil {
+			toDilateModels, toDilateNonModels := f.loadModelsMap(l-1)
+			dilatedModels := map[string]*Model{}
+			dilatedNonModels := map[string]*Model{}
+			for k, m := range toDilateNonModels { dilatedNonModels[k] = m }
 
-	return f.dilateModelMap(k, alphabet)
+			for _, m := range toDilateModels {
+				for _, i := range f.getVarIndices(alphabet) {
+					md := m.CopyWith(i, (*m)[i] != '1')
+					dilatedModels[md.String()] = md
+					delete(dilatedNonModels, md.String())
+				}
+			}
+
+			f.storeModelsMap(l, dilatedModels, dilatedNonModels)
+
+			if l == k { return dilatedModels, dilatedNonModels }
+		}
+	}
+
+	return f.loadModelsMap(k)
 }
 
 ///////////////////////////////////////
@@ -611,19 +611,19 @@ var tables = Table{
 		{"id": 6, "dept_id": 5, "name": "Andy"},
 		{"id": 7, "dept_id": 6, "name": "Creed"},
 		{"id": 8, "dept_id": 6, "name": "Dwight"},
-		{"id": 9, "dept_id": 6, "name": "Kevin"},
-		{"id": 10, "dept_id": 7, "name": "Kelly"},
+		//{"id": 9, "dept_id": 6, "name": "Kevin"},
+		//{"id": 10, "dept_id": 7, "name": "Kelly"},
 	},
 	"Department": {
 		{"id": 1, "name": "Management"},
 		{"id": 2, "name": "Sales"},
-		//{"id": 3, "name": "Accounting"},
-		//{"id": 4, "name": "HR"},
+		{"id": 3, "name": "Accounting"},
+		{"id": 4, "name": "HR"},
 		//{"id": 5, "name": "Reception"},
 	},
 	"Address": {
 		{"id": 1, "emp_id": 1, "address": "Sesame street 1"},
-		//{"id": 2, "emp_id": 2, "address": "Sesame street 2"},
+		{"id": 2, "emp_id": 2, "address": "Sesame street 2"},
 		//{"id": 4, "emp_id": 11, "address": "Sesame street 4"},
 	},
 }
@@ -662,44 +662,55 @@ func distanceBasedInconsistencyForProfiles(
 	alphabet *Alphabet,
 ) {
 
-	//fmt.Printf("distanceBasedInconsistencyForProfiles(%d)...\n", len(profiles))
-
 	res := distanceBasedInconsistencyForProfileResult{
 		consistentProfiles: []*Profile{},
 		newFrontier: []*Profile{},
 	}
 
 	allPhi := append(formulae, constraints...)
-	//for i := range allPhi {
-		//fmt.Printf("allphi: %d: %p (%v)\n", i, allPhi[i], allPhi[i])
-	//}
+
 	for _, profile := range profiles {
 
-		//fmt.Printf("Profile (%v)\r", profile)
-
 		_testedProfileCount++
+		if _testedProfileCount % 100 == 0 {
+			fmt.Printf("Profile %d\r", _testedProfileCount)
+		}
 
-		phi0Model := allPhi[0].GetModels((*profile)[0], alphabet)
-		kbModel := make(map[string]bool, len(phi0Model))
-		for _, m := range phi0Model { kbModel[string(m)] = true }
+		phi0models, phi0nonModels := allPhi[0].GetModelsMap((*profile)[0], alphabet)
+		modelIntersect := make(map[string]*Model, len(phi0models))
 
-		for i := 1; i < len(allPhi) && len(kbModel) > 0 ; i++ {
+		consistent := false
 
-			phiModels := allPhi[i].GetModelsMap((*profile)[i], alphabet)
-			fmt.Printf("%d (+%d): %v: intersection %v (phi models %v)\n", i+1, (*profile)[i], allPhi[i], len(kbModel), len(phiModels))
-			kbPhiIntersect := make(map[string]bool, len(kbModel))
-			for intersectStr := range kbModel {
-				if phiModels[intersectStr] != nil {
-					kbPhiIntersect[intersectStr] = true
+		if len(phi0models) > len(phi0nonModels) {
+
+			for k, v := range phi0models { modelIntersect[k] = v }
+			for i := 1; i < len(allPhi) && len(modelIntersect) > 0 ; i++ {
+
+				phiModels, _ := allPhi[i].GetModelsMap((*profile)[i], alphabet)
+				for intersectStr := range modelIntersect {
+					if phiModels[intersectStr] == nil {
+						delete(modelIntersect, intersectStr)
+					}
 				}
 			}
+			consistent = len(modelIntersect) > 0
 
-			kbModel = kbPhiIntersect
+		} else {
+
+			nonModelJoin := make(map[string]*Model, 1<<len(*alphabet))
+			for k, v := range phi0nonModels { nonModelJoin[k] = v }
+			for i := 1; i < len(allPhi) ; i++ {
+
+				_, phiNonModels := allPhi[i].GetModelsMap((*profile)[i], alphabet)
+				for modelStr, model := range phiNonModels {
+					nonModelJoin[modelStr] = model
+				}
+			}
+			consistent = len(nonModelJoin) < (1<<len(*alphabet))
 		}
-		fmt.Printf("FINAL INTERSECT: intersection %v\n", kbModel)
 
-		if len(kbModel) > 0 {
-			//fmt.Printf("consistent (%v) model: %v\n", profile.String(), kbModel)
+		if consistent {
+			//fmt.Printf("consistent (%v) model: %v\n", profile.String(), modelIntersect)
 			res.consistentProfiles = append(res.consistentProfiles, profile)
 
 		} else {
@@ -778,7 +789,7 @@ func distanceBasedInconsistency(formulae []*Formula, constraints []*Formula, alp
 	sort.Strings(ks)
 
 	var minIsum, minImax, minIhit *uint
-	fmt.Printf("Tested %d profiles, found %d consistent profiles, %d minimal\n", _testedProfileCount, len(consistentProfiles), len(ks))
+	fmt.Printf("Tested %d profiles, found %d minimal consistent profiles\n", _testedProfileCount, len(consistentProfiles))
 	for _, k := range ks {
 		minProfile := consistentProfiles[k]
 		Isum := uint(minProfile.sum())
