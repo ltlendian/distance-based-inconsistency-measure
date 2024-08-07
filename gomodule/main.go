@@ -683,14 +683,14 @@ func distanceBasedInconsistencyForProfiles(
 			modelIntersect := make(map[string]*Model, len(phi0models))
 			for k, v := range phi0models { modelIntersect[k] = v }
 
-			outer:
+			outerIntersect:
 			for i := 1; i < len(allPhi) && len(modelIntersect) > 0 ; i++ {
 
 				phiModels, _ := allPhi[i].GetModelsMap((*profile)[i], alphabet)
 				for intersectStr := range modelIntersect {
 					if phiModels[intersectStr] == nil {
 						delete(modelIntersect, intersectStr)
-						if len(modelIntersect) == 0 { break outer }
+						if len(modelIntersect) == 0 { break outerIntersect }
 					}
 				}
 			}
@@ -701,12 +701,12 @@ func distanceBasedInconsistencyForProfiles(
 			nonModelJoin := make(map[string]*Model, 1<<len(*alphabet))
 			for k, v := range phi0nonModels { nonModelJoin[k] = v }
 
-			outer:
+			outerNonIntersect:
 			for i := 1; i < len(allPhi) ; i++ {
 				_, phiNonModels := allPhi[i].GetModelsMap((*profile)[i], alphabet)
 				for modelStr, model := range phiNonModels {
 					nonModelJoin[modelStr] = model
-					if len(nonModelJoin) >= (1<<len(*alphabet)) { break outer }
+					if len(nonModelJoin) >= (1<<len(*alphabet)) { break outerNonIntersect }
 				}
 			}
 			consistent = len(nonModelJoin) < (1<<len(*alphabet))
