@@ -706,7 +706,7 @@ func distanceBasedInconsistencyForProfiles(
 				_, phiNonModels := allPhi[i].GetModelsMap((*profile)[i], alphabet)
 				for modelStr, model := range phiNonModels {
 					nonModelJoin[modelStr] = model
-					if len(nonModelJoin) >= (1<<len(*alphabet)) { break outerNonIntersect }
+					if len(nonModelJoin) == (1<<len(*alphabet)) { break outerNonIntersect }
 				}
 			}
 			consistent = len(nonModelJoin) < (1<<len(*alphabet))
